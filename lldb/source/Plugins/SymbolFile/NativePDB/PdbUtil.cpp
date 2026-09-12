@@ -911,6 +911,11 @@ VariableInfo lldb_private::npdb::GetVariableLocationInfo(
 
       result.location.AddExpression(entry.GetRangeBase(), entry.GetRangeEnd(),
                                      dwarf_expr);
+      // location_map is sorted (RangeMap::Append/Sort keep it that way), so
+      // appending in iteration order keeps this list sorted too, matching
+      // what Variable::IsInScope's FindEntryThatContains expects.
+      result.ranges.Append(entry.GetRangeBase(),
+                           entry.GetRangeEnd() - entry.GetRangeBase());
     }
     return result;
   }

@@ -104,6 +104,14 @@ struct VariableInfo {
   llvm::codeview::TypeIndex type;
   DWARFExpressionList location;
   bool is_param;
+  // The union of this variable's own S_DEFRANGE* live ranges, when known.
+  // Empty means the variable (a parameter, or a local with no live-range
+  // splitting) is valid for its entire enclosing block, matching prior
+  // behavior; SymbolFileNativePDB::CreateLocalVariable uses this to build
+  // the Variable's scope_ranges so IsInScope() can tell disjoint live
+  // ranges of the same optimized local apart instead of treating every
+  // one of them as simultaneously in scope for the whole function.
+  Variable::RangeList ranges;
 };
 
 llvm::pdb::PDB_SymType CVSymToPDBSym(llvm::codeview::SymbolKind kind);
