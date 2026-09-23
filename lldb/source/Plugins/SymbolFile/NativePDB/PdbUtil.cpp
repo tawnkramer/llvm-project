@@ -54,6 +54,17 @@ MakeRangeList(const PdbIndex &index, const LocalVariableAddrRange &range,
   return result;
 }
 
+static Variable::RangeList MakeFullScopeRangeList(Block &func_block) {
+  Variable::RangeList result;
+  for (const AddressRange &range : func_block.GetRanges()) {
+    lldb::addr_t base = range.GetBaseAddress().GetFileAddress();
+    if (base != LLDB_INVALID_ADDRESS && range.GetByteSize() != 0)
+      result.Append(base, range.GetByteSize());
+  }
+  result.Sort();
+  return result;
+}
+
 namespace {
 struct MemberLocations {
   std::map<uint64_t, MemberValLocation> offset_to_location;
@@ -713,9 +724,27 @@ static bool GetFrameDataProgram(PdbIndex &index,
 }
 
 static RegisterId GetBaseFrameRegister(PdbIndex &index,
-                                       PdbCompilandSymId frame_proc_id,
+                                       PdbCompilandSymId func_scope_id,
                                        bool is_parameter) {
-  CVSymbol frame_proc_cvs = index.ReadSymbolRecord(frame_proc_id);
+  CVSymbol func_scope_cvs = index.ReadSymbolRecord(func_scope_id);
+  lldbassert(func_scope_cvs.kind() == S_GPROC32 ||
+             func_scope_cvs.kind() == S_LPROC32);
+  ProcSym proc(static_cast<SymbolRecordKind>(func_scope_cvs.kind()));
+  if (llvm::Error error =
+          SymbolDeserializer::deserializeAs<ProcSym>(func_scope_cvs, proc)) {
+    llvm::consumeError(std::move(error));
+    return RegisterId::NONE;
+  }
+
+  PdbCompilandSymId frame_proc_id(
+      func_scope_id.modi, func_scope_id.offset + func_scope_cvs.length());
+  CVSymbol frame_proc_cvs;
+  while (frame_proc_id.offset < proc.End) {
+    frame_proc_cvs = index.ReadSymbolRecord(frame_proc_id);
+    if (frame_proc_cvs.kind() == S_FRAMEPROC)
+      break;
+    frame_proc_id.offset += frame_proc_cvs.RecordData.size();
+  }
   if (frame_proc_cvs.kind() != S_FRAMEPROC)
     return RegisterId::NONE;
 
@@ -798,14 +827,7 @@ VariableInfo lldb_private::npdb::GetVariableLocationInfo(
         if (base_reg == RegisterId::NONE) {
           PdbCompilandSymId func_scope_id =
               PdbSymUid(func_block.GetID()).asCompilandSym();
-          CVSymbol func_block_cvs = index.ReadSymbolRecord(func_scope_id);
-          lldbassert(func_block_cvs.kind() == S_GPROC32 ||
-                     func_block_cvs.kind() == S_LPROC32);
-          PdbCompilandSymId frame_proc_id(func_scope_id.modi,
-                                          func_scope_id.offset +
-                                              func_block_cvs.length());
-          base_reg =
-              GetBaseFrameRegister(index, frame_proc_id, result.is_param);
+          base_reg = GetBaseFrameRegister(index, func_scope_id, result.is_param);
           if (base_reg == RegisterId::NONE)
             break;
         }
@@ -888,11 +910,39 @@ VariableInfo lldb_private::npdb::GetVariableLocationInfo(
                                 {loc.Hdr.Register, 0, true}, ranges);
         break;
       }
+      case S_DEFRANGE_FRAMEPOINTER_REL_FULL_SCOPE: {
+        DefRangeFramePointerRelFullScopeSym loc(
+            SymbolRecordKind::DefRangeFramePointerRelFullScopeSym);
+        if (llvm::Error error = SymbolDeserializer::deserializeAs<
+                DefRangeFramePointerRelFullScopeSym>(loc_specifier_cvs, loc)) {
+          llvm::consumeError(std::move(error));
+          return result;
+        }
+        Variable::RangeList raw_ranges = MakeFullScopeRangeList(func_block);
+        if (raw_ranges.IsEmpty())
+          break;
+        if (base_reg == RegisterId::NONE) {
+          PdbCompilandSymId func_scope_id =
+              PdbSymUid(func_block.GetID()).asCompilandSym();
+          base_reg = GetBaseFrameRegister(index, func_scope_id, result.is_param);
+          if (base_reg == RegisterId::NONE)
+            break;
+        }
+        DWARFExpression expr;
+        if (base_reg == RegisterId::VFRAME) {
+          llvm::StringRef program;
+          if (GetFrameDataProgram(index, raw_ranges, program))
+            expr = MakeVFrameRelLocationExpression(program, loc.Offset, module);
+        } else {
+          expr = MakeRegRelLocationExpression(base_reg, loc.Offset, module);
+        }
+        AddDwarfRange(location_map, expr, raw_ranges);
+        break;
+      }
       // FIXME: Handle other kinds. LLVM only generates the 4 types of records
       // above. MSVC generates other location types.
       case S_DEFRANGE:
       case S_DEFRANGE_SUBFIELD:
-      case S_DEFRANGE_FRAMEPOINTER_REL_FULL_SCOPE:
         break;
       default:
         finished = true;

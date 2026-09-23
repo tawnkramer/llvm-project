@@ -1996,6 +1996,27 @@ size_t SymbolFileNativePDB::ParseVariablesForBlock(PdbCompilandSymId block_id) {
   auto iter = syms.begin();
   auto end = syms.end();
 
+  // Recent MSVC PDBs emit authoritative S_LOCAL/S_DEFRANGE records followed
+  // by legacy S_REGREL32/S_REGISTER home locations for the same variables.
+  // The home locations are not live-range descriptions and can contain stale
+  // values in optimized code.  Keep them for older PDBs, but do not expose a
+  // legacy variable when this lexical block has modern records.  MSVC emits
+  // the legacy set as one trailing group, and mixing either representation is
+  // unsafe because an otherwise unique home record can still be stale.
+  bool has_modern_locals = false;
+  auto scan = syms.begin();
+  ++scan;
+  while (scan != end) {
+    CVSymbol child = *scan;
+    ++scan;
+    if (child.kind() == S_BLOCK32 || child.kind() == S_INLINESITE) {
+      scan = syms.at(getScopeEndOffset(child));
+      continue;
+    }
+    if (child.kind() == S_LOCAL)
+      has_modern_locals = true;
+  }
+
   while (iter != end) {
     uint32_t record_offset = iter.offset();
     CVSymbol variable_cvs = *iter;
@@ -2017,6 +2038,9 @@ size_t SymbolFileNativePDB::ParseVariablesForBlock(PdbCompilandSymId block_id) {
     switch (variable_cvs.kind()) {
     case S_REGREL32:
     case S_REGISTER:
+      if (has_modern_locals)
+        break;
+      [[fallthrough]];
     case S_LOCAL:
       variable = GetOrCreateLocalVariable(block_id, child_sym_id, is_param);
       if (is_param)
