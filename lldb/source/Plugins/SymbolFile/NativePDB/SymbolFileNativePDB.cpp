@@ -2005,7 +2005,6 @@ size_t SymbolFileNativePDB::ParseVariablesForBlock(PdbCompilandSymId block_id) {
   // unsafe because an otherwise unique home record can still be stale.
   bool has_modern_locals = false;
   auto scan = syms.begin();
-  ++scan;
   while (scan != end) {
     CVSymbol child = *scan;
     ++scan;
