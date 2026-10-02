@@ -1561,9 +1561,16 @@ void SymbolFileNativePDB::ParseInlineSite(PdbCompilandSymId id,
     }
   }
 
-  // Get the inlined function name.
-  CVType inlinee_cvt = m_index->ipi().getType(inline_site.Inlinee);
+  // Get the inlined function name. An Inlinee with the high bit set is a
+  // decorated cross-module import id (DEBUG_S_CROSSSCOPEIMPORTS), not an index
+  // into this PDB's IPI stream, and NativePDB does not resolve those. getType
+  // does not range-check in a release build, so such an id reads far past the
+  // end of the record array; leave the name empty instead.
   std::string inlinee_name;
+  CVType inlinee_cvt;
+  if (!inline_site.Inlinee.isSimple() &&
+      inline_site.Inlinee.getIndex() < m_index->ipi().TypeIndexEnd())
+    inlinee_cvt = m_index->ipi().getType(inline_site.Inlinee);
   if (inlinee_cvt.kind() == LF_MFUNC_ID) {
     MemberFuncIdRecord mfr;
     cantFail(

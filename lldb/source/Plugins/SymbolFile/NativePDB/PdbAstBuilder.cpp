@@ -965,6 +965,11 @@ PdbAstBuilder::CreateFunctionDeclFromId(PdbTypeSymId func_tid,
   SymbolFileNativePDB *pdb = static_cast<SymbolFileNativePDB *>(
       m_clang.GetSymbolFile()->GetBackingSymbolFile());
   PdbIndex &index = pdb->GetIndex();
+  // See SymbolFileNativePDB::ParseInlineSite: an inline site's Inlinee may be
+  // a cross-module import id that is not in the IPI stream at all.
+  if (func_tid.index.isSimple() ||
+      func_tid.index.getIndex() >= index.ipi().TypeIndexEnd())
+    return nullptr;
   CVType func_cvt = index.ipi().getType(func_tid.index);
   llvm::StringRef func_name;
   TypeIndex func_ti;
