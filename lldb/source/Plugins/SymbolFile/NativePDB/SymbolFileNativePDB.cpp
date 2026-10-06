@@ -1485,9 +1485,15 @@ void SymbolFileNativePDB::ParseInlineSite(PdbCompilandSymId id,
       code_offset += annot.U1;
       is_terminal_entry = true;
       break;
-    case BinaryAnnotationsOpCode::ChangeFile:
-      update_file_offset(annot.U1);
+    case BinaryAnnotationsOpCode::ChangeFile: {
+      // U1 is an offset into DEBUG_S_FILECHECKSUMS, not a support file index.
+      llvm::Expected<uint32_t> file_index_or_err = GetFileIndex(*cii, annot.U1);
+      if (file_index_or_err)
+        update_file_offset(*file_index_or_err);
+      else
+        llvm::consumeError(file_index_or_err.takeError());
       break;
+    }
     default:
       break;
     }
