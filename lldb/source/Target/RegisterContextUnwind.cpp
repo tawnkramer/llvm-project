@@ -586,7 +586,7 @@ void RegisterContextUnwind::InitializeNonZerothFrame() {
     }
   }
 
-  const UnwindPlan::Row *active_row;
+  const UnwindPlan::Row *active_row = nullptr;
   RegisterKind row_register_kind = eRegisterKindGeneric;
 
   // If we have LanguageRuntime UnwindPlan for this unwind, use those
